@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         UCAS Class Enrollment Assistant
-// @version      1.3
+// @version      1.4
 // @description  这是一个方便抢课界面操作的脚本。包括的功能有：1.自动跳转： 进入选课系统后，会自动跳转到选择课程页面。（如需查看通知公告 需要临时把脚本禁用）2.一键筛选/定位： 点击🚀即可自动筛选学院/滚动到对应课程所在位置（在筛选学院页面也可以直接点击课程编号等按钮一键跳转）。3.快速提交： 选课页面添加提交选课按钮。目前为自用版，而且由于需要赶在抢课之前完成，时间比较紧张，故配置待抢课程需要手动修改代码里的config。
 // @author       BarryZZJ
 // @namespace    https://github.com/barryZZJ/
@@ -279,8 +279,8 @@ const mycss = `
     margin-top: 5px;
     margin-bottom: 5px;
   }
-  .zzjbtn.copied{
-    background-color: cyan;
+  .zzjbtn.highlight{
+    background-color: yellow;
   }
   .zzjbtn:active{
     background-color: gray;
@@ -294,6 +294,7 @@ sty.type = "text/css";
 sty.appendChild(document.createTextNode(mycss));
 document.body.appendChild(sty);
 
+var divCourseWish;
 function prefix (...data) {
   return ['[抢课辅助]', ...data];
 }
@@ -302,6 +303,7 @@ function drawPanel(page) {
   // 待选课程表格
   let tab = '';
   let wishList = config.wishList;
+  let zzjBtnId = 1;
   for (const dept in wishList) {
     let courses = wishList[dept];
     let deptid = DeptIdMap[dept];
@@ -317,23 +319,23 @@ function drawPanel(page) {
           tab += '<tr>';
           if (firstrow) {
             if (firstdept) {
-              tab += `<td rowspan="${wishes.length}"><button class="zzjbtn dept jumpdept nowrap" deptid="${deptid}">${dept}🚀</button></td>`;
+              tab += `<td rowspan="${wishes.length}"><button id="zzjbtn${zzjBtnId++}" class="zzjbtn dept jumpdept nowrap" deptid="${deptid}">${dept}🚀</button></td>`;
               firstdept = false;
             } else {
               tab += `<td rowspan="${wishes.length}"></td>`;
             }
-            tab += `<td rowspan="${wishes.length}"><button class="zzjbtn course copyable jumpcourse" deptid="${deptid}" name="${name}">${name}🚀</button></td>`;
+            tab += `<td rowspan="${wishes.length}"><button id="zzjbtn${zzjBtnId++}" class="zzjbtn course copyable jumpcourse" deptid="${deptid}" name="${name}">${name}🚀</button></td>`;
             firstrow = false;
           }
-          tab += `<td><button class="zzjbtn courseid copyable nowrap jumpcourseid" deptid="${deptid}" courseid="${wish.courseid}">${wish.courseid}🚀</button></td>`;
+          tab += `<td><button id="zzjbtn${zzjBtnId++}" class="zzjbtn courseid copyable nowrap jumpcourseid" deptid="${deptid}" courseid="${wish.courseid}">${wish.courseid}🚀</button></td>`;
           tab += `<td class="notes">${wish.notes}</td>`;
           tab += '</tr>';
         }
       } else {
         // wishes为空列表
         tab += '<tr>';
-        tab += `<td><button class="zzjbtn dept jumpdept" deptid="${deptid}">${dept}🚀</button></td>`;
-        tab += `<td><button class="zzjbtn course copyable jumpcourse" deptid="${deptid}" name="${name}">${name}🚀</button></td>`;
+        tab += `<td><button id="zzjbtn${zzjBtnId++}" class="zzjbtn dept jumpdept" deptid="${deptid}">${dept}🚀</button></td>`;
+        tab += `<td><button id="zzjbtn${zzjBtnId++}" class="zzjbtn course copyable jumpcourse" deptid="${deptid}" name="${name}">${name}🚀</button></td>`;
         tab += `<td></td>`;
         tab += `<td></td>`;
         tab += '</tr>';
@@ -343,6 +345,7 @@ function drawPanel(page) {
 
   let appendix = '';
   if (page == 'selectCourse' || page == 'debug') {
+    // 添加"确定提交选课"按钮
     appendix = '<div style="margin: 5px; max-height: 300px; overflow-y: auto;"><button type="submit" class="btn btn-primary">确定提交选课</button></div>';
   }
 
@@ -370,8 +373,8 @@ function drawPanel(page) {
   new Draggable(panel.get(0), dragopts);
 
   // 可调整高度
+  divCourseWish = document.getElementById("divCourseWish");
   // 读取高度记录
-  var divCourseWish = document.getElementById("divCourseWish");
   let frmheight = GM_getValue('frmheight');
   if (frmheight) {
     divCourseWish.style.maxHeight = frmheight;
@@ -414,22 +417,15 @@ function drawPanel(page) {
     }
   }
 
-  // 注册滚动事件，记录滚动位置
-  divCourseWish.onscroll = function () {
-    GM_setValue('frmscrolltop', this.scrollTop);
-  };
-  let frmscrolltop = GM_getValue('frmscrolltop');
-  if (frmscrolltop) {
-    divCourseWish.scrollTop = frmscrolltop;
-  }
-  
   return panel;
 }
 
-function setBehavior(type, data) {
+function setBehavior(type, data, scrollTop, btnId) {
   let behavior = {
     'type': type,
     'data': data,
+    'scrollTop': scrollTop,
+    'btnId': btnId,
   }
   return behavior;
 }
@@ -514,10 +510,6 @@ function error (msg) {
   if (window.location.href.startsWith('https://jwxk.ucas.ac.cn/courseManage/main')) {
     // 进入筛选学院页面
 
-    // TODO 对着checkbox按中键可以添加到list；
-    // TODO right: 0px改成left；
-    // TODO 重放上次提交记录（重写选课按钮方法，点击提交时额外把form存到storage里；重放时替换innerHTML后触发submit）
-    
     // 添加手动调整大小功能，并记录在storage
     // 一键跳转功能跳转后，插件页面保持在滚动条的位置
     
@@ -532,6 +524,7 @@ function error (msg) {
     let panel = drawPanel();
     // 一键筛选学院
     $(".zzjbtn.dept").click(function () {
+      $(this).addClass('highlight');
       let deptid = $(this).attr('deptid');
       sumbitFilterDept(deptid);
     });
@@ -544,17 +537,27 @@ function error (msg) {
     
     // 单击课程名，筛选学院后，自动定位到匹配到的第一行
     $('.jumpcourse').click(function () {
+      $('.jumpcourse').removeClass('highlight');
+      $('.jumpcourseid').removeClass('highlight');
+      $(this).addClass('highlight');
       let deptid = $(this).attr('deptid');
       let coursename = $(this).attr('name');
-      let behavior = setBehavior('coursename', coursename);
+      let scrollTop = divCourseWish.scrollTop;  // 方便跳转后保持插件面板的滚动位置
+      let btnId = $(this).attr('id');  // 方便跳转后高亮
+      let behavior = setBehavior('coursename', coursename, scrollTop, btnId);
       sumbitFilterDept(deptid, behavior);
     });
 
     // 单击课程id，筛选学院后，自动定位到所在行
     $('.jumpcourseid').click(function () {
+      $('.jumpcourse').removeClass('highlight');
+      $('.jumpcourseid').removeClass('highlight');
+      $(this).addClass('highlight');
       let deptid = $(this).attr('deptid');
       let courseid = $(this).attr('courseid');
-      let behavior = setBehavior('courseid', courseid);
+      let scrollTop = divCourseWish.scrollTop;  // 方便跳转后保持插件面板的滚动位置
+      let btnId = $(this).attr('id');  // 方便跳转后高亮
+      let behavior = setBehavior('courseid', courseid, scrollTop, btnId);
       sumbitFilterDept(deptid, behavior);
     });
 
@@ -570,6 +573,9 @@ function error (msg) {
 
     // 单击课程名，自动定位到匹配到的第一行
     $('.jumpcourse').click(function () {
+      $('.jumpcourse').removeClass('highlight');
+      $('.jumpcourseid').removeClass('highlight');
+      $(this).addClass('highlight');
       let coursename = $(this).attr('name');
       let courseidspan = getElementsByText($("#regfrm a"), coursename, true);
       if (courseidspan.length > 0) {
@@ -581,6 +587,9 @@ function error (msg) {
 
     // 单击课程id，自动定位到所在行
     $('.jumpcourseid').click(function () {
+      $('.jumpcourse').removeClass('highlight');
+      $('.jumpcourseid').removeClass('highlight');
+      $(this).addClass('highlight');
       let courseid = $(this).attr('courseid');
       let courseidspan = getElementsByText($("#regfrm span"), courseid);
       if (courseidspan.length > 0) {
@@ -593,18 +602,32 @@ function error (msg) {
     // 解析跳转参数
     let behavior = parseBehavior();
     if (behavior) {
+      // 高亮按钮
+      $(`#${behavior.btnId}`).addClass('highlight');
+      // 插件面板滚动条恢复到之前位置
+      divCourseWish.scrollTop = behavior.scrollTop;
+      // 定位+高亮课程
       if (behavior.type == 'courseid') {
-        // 跳转到指定courseid
+        // 定位到指定courseid
         let courseid = behavior.data;
         let courseidspan = getElementsByText($("#regfrm span"), courseid);
         if (courseidspan.length > 0) {
-          scrollto(courseidspan.eq(0));
+          // 如果找到则跳转到指定位置，并高亮对应行
+          courseidspan = courseidspan.eq(0);
+          courseidspan.css('background-color', 'yellow');
+          scrollto(courseidspan);
+          
         }
+        
       } else if (behavior.type == 'coursename') {
+        // 定位到指定课程名
         let coursename = behavior.data;
-        let courseidspan = getElementsByText($("#regfrm a"), coursename, true);
-        if (courseidspan.length > 0) {
-          scrollto(courseidspan.eq(0));
+        let coursenametag = getElementsByText($("#regfrm a"), coursename, true);
+        if (coursenametag.length > 0) {
+          // 如果找到则跳转到指定位置，并高亮对应行
+          coursenametag = coursenametag.eq(0);
+          coursenametag.css('background-color', 'yellow');
+          scrollto(coursenametag);
         }
       }
     }
