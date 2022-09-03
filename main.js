@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         UCAS Class Enrollment Assistant
-// @version      1.4
+// @version      1.5
 // @description  这是一个方便抢课界面操作的脚本。包括的功能有：1.自动跳转： 进入选课系统后，会自动跳转到选择课程页面。（如需查看通知公告 需要临时把脚本禁用）2.一键筛选/定位： 点击🚀即可自动筛选学院/滚动到对应课程所在位置（在筛选学院页面也可以直接点击课程编号等按钮一键跳转）。3.快速提交： 选课页面添加提交选课按钮。目前为自用版，而且由于需要赶在抢课之前完成，时间比较紧张，故配置待抢课程需要手动修改代码里的config。
 // @author       BarryZZJ
 // @namespace    https://github.com/barryZZJ/
@@ -295,11 +295,14 @@ sty.appendChild(document.createTextNode(mycss));
 document.body.appendChild(sty);
 
 var divCourseWish;
+var alreadyHighlighted;
 function prefix (...data) {
   return ['[抢课辅助]', ...data];
 }
 
-function drawPanel(page) {
+function drawPanel (page) {
+  let isCourseSelection = page == 'selectCourse' || page == 'debug';
+  let isMain = page == 'main';
   // 待选课程表格
   let tab = '';
   let wishList = config.wishList;
@@ -344,9 +347,40 @@ function drawPanel(page) {
   }
 
   let appendix = '';
-  if (page == 'selectCourse' || page == 'debug') {
+  if (isCourseSelection) {
+    // 进入选课页面
+    var appendixDiv = document.createElement('div');
+    appendixDiv.id = 'zzjappendix';
+    appendixDiv.style = 'margin: 5px; max-height: 300px; overflow-y: auto;';
+
+    // 插入验证码 加在onload事件里保证验证码加载出来
+    let zzjValiImg = document.createElement('img');
+    zzjValiImg.id = 'zzjValiImg';
+    zzjValiImg.title = '点击更换验证码';
+    zzjValiImg.align = 'bottom';
+    zzjValiImg.style.cursor = 'pointer';
+    appendixDiv.appendChild(zzjValiImg);
+    // img.width = ValidateImg.width;
+    // img.height = ValidateImg.height;
+
+    // 插入验证码输入框
+    let zzjValiInput = document.createElement('input');
+    zzjValiInput.id = 'zzjvcode';
+    zzjValiInput.type = 'text';
+    zzjValiInput.style.width = '50px';
+    zzjValiInput.style.marginLeft = '5px';
+    zzjValiInput.style.marginRight = '5px';
+    appendixDiv.appendChild(zzjValiInput);
+    
     // 添加"确定提交选课"按钮
-    appendix = '<div style="margin: 5px; max-height: 300px; overflow-y: auto;"><button type="submit" class="btn btn-primary">确定提交选课</button></div>';
+    let zzjSubmit = document.createElement('button');
+    zzjSubmit.id = 'zzjsubmit';
+    zzjSubmit.type = 'submit';
+    zzjSubmit.className = 'btn btn-primary';
+    zzjSubmit.textContent = '确定提交选课';
+    appendixDiv.appendChild(zzjSubmit);
+
+    appendix = appendixDiv.outerHTML;
   }
 
   let panel = $(
@@ -364,6 +398,101 @@ function drawPanel(page) {
     '</div >'
   ).appendTo('body');
 
+  // 配置各种listener
+  if (isMain) {
+    // 进入筛选学院页面
+    // 一键筛选学院
+    $(".zzjbtn.dept").click(function () {
+      $(this).addClass('highlight');
+      let deptid = $(this).attr('deptid');
+      sumbitFilterDept(deptid);
+    });
+    // 复制课程代码和课程名称逻辑
+    // $(".copyable").click(function () {
+    //   $(".copyable").removeClass("copied");
+    //   GM_setClipboard($(this).text().replace('🚀', ''));
+    //   $(this).addClass("copied");
+    // });
+    
+    // 一键跳转到课程：单击课程名，自动筛选学院后，自动定位到匹配到的第一行，并且匹配项高亮
+    $('.jumpcourse').click(function () {
+      $('.jumpcourse').removeClass('highlight');
+      $('.jumpcourseid').removeClass('highlight');
+      $(this).addClass('highlight');
+      let deptid = $(this).attr('deptid');
+      let coursename = $(this).attr('name');
+      let scrollTop = divCourseWish.scrollTop;  // 一键跳转功能跳转后，插件页面保持之前滚动条的位置
+      let btnId = $(this).attr('id');  // 方便跳转后高亮
+      let behavior = setBehavior('coursename', coursename, scrollTop, btnId);
+      sumbitFilterDept(deptid, behavior);
+    });
+
+    // 一键跳转到课程id：单击课程id，自动筛选学院后，自动定位到匹配行，并且匹配项高亮
+    $('.jumpcourseid').click(function () {
+      $('.jumpcourse').removeClass('highlight');
+      $('.jumpcourseid').removeClass('highlight');
+      $(this).addClass('highlight');
+      let deptid = $(this).attr('deptid');
+      let courseid = $(this).attr('courseid');
+      let scrollTop = divCourseWish.scrollTop;  // 一键跳转功能跳转后，插件页面保持之前滚动条的位置
+      let btnId = $(this).attr('id');  // 方便跳转后高亮
+      let behavior = setBehavior('courseid', courseid, scrollTop, btnId);
+      sumbitFilterDept(deptid, behavior);
+    });
+
+  }else if (isCourseSelection) {
+    // 进入选课页面
+
+    // 单击课程名，自动定位到匹配到的第一行，并且匹配项高亮
+    $('.jumpcourse').click(function () {
+      let coursename = $(this).attr('name');
+      let btnid = $(this).attr('id');
+      let behavior = setBehavior('coursename', coursename, null, btnid);
+      alreadyHighlighted = resolveBehavior(behavior, alreadyHighlighted);
+    });
+
+    // 单击课程id，自动定位到所在行，并且匹配项高亮
+    $('.jumpcourseid').click(function () {
+      let courseid = $(this).attr('courseid');
+      let btnid = $(this).attr('id');
+      let behavior = setBehavior('courseid', courseid, null, btnid);
+      alreadyHighlighted = resolveBehavior(behavior, alreadyHighlighted);
+    });
+
+    // 修复原网站中"点击切换验证码"没反应的bug
+    let valiImg = document.getElementById('adminValidateImg');
+    valiImg.onclick = function(){
+      document.getElementById("adminValidateImg").src = '/captchaImage' + "?" + Math.random();
+    };
+    // 验证码显示及点击刷新时同步
+    document.getElementById('zzjValiImg').onclick = function () {
+      console.log('zzjValiImg clicked');
+      valiImg.onclick();
+    }
+    valiImg.addEventListener('load', () => {
+      document.getElementById('zzjValiImg').src = getBase64Image(valiImg);
+    });
+    // 有时刚进去图片就加载了，不会触发onload，需要手动设置src
+    let dataurl = getBase64Image(valiImg);
+    if (dataurl != 'data:,') {
+      document.getElementById('zzjValiImg').src = dataurl;
+    }
+  
+    // 同步两个验证码框的输入
+    $("#zzjvcode").keyup(function(){
+      $("#vcode").val($("#zzjvcode").val());
+    });
+  
+    $("#vcode").keyup(function(){
+      $("#zzjvcode").val($("#vcode").val());
+    });
+
+    // ui里的提交按钮与原来的按钮同步
+    $("#zzjpanel button[type='submit']").click(function () {
+      $('#regfrm button[type="submit"]').click();
+    });
+  }
+  
   //可拖动
   let dragopts = {
     setCursor: false,
@@ -372,14 +501,14 @@ function drawPanel(page) {
   };
   new Draggable(panel.get(0), dragopts);
 
-  // 可调整高度
+  // 手动调整ui高度，并记录在storage
   divCourseWish = document.getElementById("divCourseWish");
   // 读取高度记录
   let frmheight = GM_getValue('frmheight');
   if (frmheight) {
     divCourseWish.style.maxHeight = frmheight;
   }
-  //绑定需要拖拽改变大小的元素对象
+  // 绑定需要拖拽改变大小的元素对象
   bindResize(divCourseWish);
 
   function bindResize(el) {
@@ -421,23 +550,65 @@ function drawPanel(page) {
 }
 
 function setBehavior(type, data, scrollTop, btnId) {
+  // 设置跨网页json数据
   let behavior = {
-    'type': type,
+    'type': type,  // 'courseid' or 'coursename'
     'data': data,
     'scrollTop': scrollTop,
     'btnId': btnId,
   }
   return behavior;
 }
-function parseBehavior () {
-  let url = window.location.href;
-  let ind = url.indexOf('#zzjbehavior');
-  if (ind != -1) {
-    let data = url.substring(ind + '#zzjbehavior'.length);
-    data = decodeURI(data);
-    let behavior = JSON.parse(data);
-    return behavior;
+
+function resolveBehavior (behavior, alreadyHighlighted=null) {
+  // 解析json数据
+  if (behavior.btnId) {
+    // 清空其他按钮高亮
+    $('.jumpcourse').removeClass('highlight');
+    $('.jumpcourseid').removeClass('highlight');
+    // 高亮按钮
+    $(`#${behavior.btnId}`).addClass('highlight');
   }
+  if (behavior.scrollTop) {
+    // 插件面板滚动条恢复到之前位置
+    divCourseWish.scrollTop = behavior.scrollTop;
+  }
+  let highlighted;  // 待高亮DOM
+  if (behavior.type) {
+    // 自动滚动定位+高亮课程/课程号
+    if (behavior.type == 'courseid') {
+      let courseid = behavior.data;
+      let courseidspan = getElementsByText($("#regfrm span"), courseid);
+      // 如果找到
+      if (courseidspan.length > 0) {
+        // 跳转到指定位置，并高亮对应行
+        highlighted = courseidspan.eq(0);
+      }
+    } else if (behavior.type == 'coursename') {
+      let coursename = behavior.data;
+      let coursenametag = getElementsByText($("#regfrm a"), coursename, true);
+      // 如果找到
+      if (coursenametag.length > 0) {
+        // 跳转到指定位置，并高亮对应行
+        highlighted = coursenametag.eq(0);
+      }
+    }
+    if (highlighted) {
+      // 清空其他高亮
+      if (alreadyHighlighted) {
+        alreadyHighlighted.css('background-color', '');
+      } else {
+        $('#regfrm span[style*=yellow]').css('background-color', '');
+        $('#regfrm a[style*=yellow]').css('background-color', '');
+      }
+      // 高亮匹配项
+      highlighted.css('background-color', 'yellow');
+      scrollto(highlighted);
+    } else {
+      error('未搜索到课程 ' + behavior.data);
+    }
+  }
+  return highlighted;
 }
 
 function injectJsonToAction (selector, json) {
@@ -459,6 +630,7 @@ function sumbitFilterDept (deptid, behavior) {
   // 提交
   $("#regfrm2 button[type='submit']").submit();
 }
+
 function getElementsByText(elems, value, isFuzzy=false){
   return elems.filter(function (index) {
     if (isFuzzy) {
@@ -479,7 +651,7 @@ function randomString(len) {
   return pwd;
 }
 function scrollto(jqele) {
-  // offset 60px height header
+  // offset header which is 60px in height
   let buffer = document.createElement('div');
   buffer.id = randomString(5);
   buffer.style.display = 'block';
@@ -493,9 +665,29 @@ function scrollto(jqele) {
   a.click();
 }
 
+function getBase64Image(img) {
+	// Create an empty canvas element
+	var canvas = document.createElement("canvas");
+	canvas.width = img.naturalWidth;
+	canvas.height = img.naturalHeight;
+
+	// Copy the image contents to the canvas
+	var ctx = canvas.getContext("2d");
+	ctx.drawImage(img, 0, 0);
+
+	// Get the data-URL formatted image
+	// Firefox supports PNG and JPEG. You could check img.src to
+	// guess the original format, but be aware the using "image/jpg"
+	// will re-encode the image.
+	var dataURL = canvas.toDataURL("image/png");
+	return dataURL;
+}
+
 function error (msg) {
+  // 解析时错误处理，错误提示使用选课系统自带的方法
   $.jBox.tip(msg);
 }
+
 
 (function () {
   'use strict';
@@ -509,127 +701,22 @@ function error (msg) {
   
   if (window.location.href.startsWith('https://jwxk.ucas.ac.cn/courseManage/main')) {
     // 进入筛选学院页面
-
-    // 添加手动调整大小功能，并记录在storage
-    // 一键跳转功能跳转后，插件页面保持在滚动条的位置
-    
-    // 学院名点击后自动筛选学院
-
-    // 一键跳转功能：
-    // 课程id点击后添加到剪贴板，并自动筛学院，跳转后自动定位到对应的课，注意抵消header高度60px。
-    // 课程名点击后添加到剪贴板，并自动筛学院，跳转后自动定位到对应的课，注意抵消header高度60px。
-
-    // 解析时错误处理，错误提示复用自带的方法
-
-    let panel = drawPanel();
-    // 一键筛选学院
-    $(".zzjbtn.dept").click(function () {
-      $(this).addClass('highlight');
-      let deptid = $(this).attr('deptid');
-      sumbitFilterDept(deptid);
-    });
-    // 复制课程代码和课程名称逻辑
-    // $(".copyable").click(function () {
-    //   $(".copyable").removeClass("copied");
-    //   GM_setClipboard($(this).text().replace('🚀', ''));
-    //   $(this).addClass("copied");
-    // });
-    
-    // 单击课程名，筛选学院后，自动定位到匹配到的第一行
-    $('.jumpcourse').click(function () {
-      $('.jumpcourse').removeClass('highlight');
-      $('.jumpcourseid').removeClass('highlight');
-      $(this).addClass('highlight');
-      let deptid = $(this).attr('deptid');
-      let coursename = $(this).attr('name');
-      let scrollTop = divCourseWish.scrollTop;  // 方便跳转后保持插件面板的滚动位置
-      let btnId = $(this).attr('id');  // 方便跳转后高亮
-      let behavior = setBehavior('coursename', coursename, scrollTop, btnId);
-      sumbitFilterDept(deptid, behavior);
-    });
-
-    // 单击课程id，筛选学院后，自动定位到所在行
-    $('.jumpcourseid').click(function () {
-      $('.jumpcourse').removeClass('highlight');
-      $('.jumpcourseid').removeClass('highlight');
-      $(this).addClass('highlight');
-      let deptid = $(this).attr('deptid');
-      let courseid = $(this).attr('courseid');
-      let scrollTop = divCourseWish.scrollTop;  // 方便跳转后保持插件面板的滚动位置
-      let btnId = $(this).attr('id');  // 方便跳转后高亮
-      let behavior = setBehavior('courseid', courseid, scrollTop, btnId);
-      sumbitFilterDept(deptid, behavior);
-    });
+    let panel = drawPanel('main');
 
   }
 
   if (window.location.href.startsWith('https://jwxk.ucas.ac.cn/courseManage/selectCourse')) {
-    // 进入学院对应课程页面
+    // 进入选课页面
     let panel = drawPanel('selectCourse');
-    // 添加提交按钮，触发“确定提交选课”按钮（form #regfrm的button type="submit"）
-    $("#zzjpanel button[type='submit']").click(function () {
-      $('#regfrm button[type="submit"]').click();
-    });
 
-    // 单击课程名，自动定位到匹配到的第一行
-    $('.jumpcourse').click(function () {
-      $('.jumpcourse').removeClass('highlight');
-      $('.jumpcourseid').removeClass('highlight');
-      $(this).addClass('highlight');
-      let coursename = $(this).attr('name');
-      let courseidspan = getElementsByText($("#regfrm a"), coursename, true);
-      if (courseidspan.length > 0) {
-        scrollto(courseidspan.eq(0));
-      } else {
-        error('未搜索到课程 ' + coursename);
-      }
-    });
-
-    // 单击课程id，自动定位到所在行
-    $('.jumpcourseid').click(function () {
-      $('.jumpcourse').removeClass('highlight');
-      $('.jumpcourseid').removeClass('highlight');
-      $(this).addClass('highlight');
-      let courseid = $(this).attr('courseid');
-      let courseidspan = getElementsByText($("#regfrm span"), courseid);
-      if (courseidspan.length > 0) {
-        scrollto(courseidspan.eq(0));
-      } else {
-        error('未搜索到课程 ' + courseid);
-      }
-    });
-
-    // 解析跳转参数
-    let behavior = parseBehavior();
-    if (behavior) {
-      // 高亮按钮
-      $(`#${behavior.btnId}`).addClass('highlight');
-      // 插件面板滚动条恢复到之前位置
-      divCourseWish.scrollTop = behavior.scrollTop;
-      // 定位+高亮课程
-      if (behavior.type == 'courseid') {
-        // 定位到指定courseid
-        let courseid = behavior.data;
-        let courseidspan = getElementsByText($("#regfrm span"), courseid);
-        if (courseidspan.length > 0) {
-          // 如果找到则跳转到指定位置，并高亮对应行
-          courseidspan = courseidspan.eq(0);
-          courseidspan.css('background-color', 'yellow');
-          scrollto(courseidspan);
-          
-        }
-        
-      } else if (behavior.type == 'coursename') {
-        // 定位到指定课程名
-        let coursename = behavior.data;
-        let coursenametag = getElementsByText($("#regfrm a"), coursename, true);
-        if (coursenametag.length > 0) {
-          // 如果找到则跳转到指定位置，并高亮对应行
-          coursenametag = coursenametag.eq(0);
-          coursenametag.css('background-color', 'yellow');
-          scrollto(coursenametag);
-        }
-      }
+    // 解析跨页json参数(如果有)
+    let url = window.location.href;
+    let ind = url.indexOf('#zzjbehavior');
+    if (ind != -1) {
+      let data = url.substring(ind + '#zzjbehavior'.length);
+      data = decodeURI(data);
+      let behavior = JSON.parse(data);
+      alreadyHighlighted = resolveBehavior(behavior, alreadyHighlighted);
     }
   }
 })();
