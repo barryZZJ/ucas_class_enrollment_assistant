@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         UCAS Class Enrollment Assistant
-// @version      1.5
-// @description  这是一个方便抢课界面操作的脚本。包括的功能有：1.自动跳转： 进入选课系统后，会自动跳转到选择课程页面。（如需查看通知公告 需要临时把脚本禁用）2.一键筛选/定位： 点击🚀即可自动筛选学院/滚动到对应课程所在位置（在筛选学院页面也可以直接点击课程编号等按钮一键跳转）。3.快速提交： 选课页面添加提交选课按钮。目前为自用版，而且由于需要赶在抢课之前完成，时间比较紧张，故配置待抢课程需要手动修改代码里的config。
+// @version      1.6
+// @description  这是一个方便抢课界面操作的脚本。包括的功能有：1.自动跳转：进入选课系统后，会自动跳转到选择课程页面。（如需查看通知公告 需要临时把脚本禁用）2.一键筛选学院：点击学院名🚀按钮可自动筛选学院。3.一键跳转到课程/课程号：点击课程名/课程id🚀可自动筛选学院，然后滚动到对应课程所在位置，并且课程名/课程号高亮。4.快速提交：选课页面内，插件ui添加验证码框+提交选课按钮（PS：修复了原网页中"点击切换验证码"没反应的bug，现在可以点击验证码图片更新没有加载出来的验证码了）。5.标注已抢到的课与已满员的课：分别用绿色和红色表示，方便抢课时迅速做出判断。已满员的课只有进入选课页面才会更新状态。⚠️目前为自用版，而且由于需要赶在抢课之前完成，时间比较紧张，故配置待选课程需要手动修改代码里的config。
 // @author       BarryZZJ
 // @namespace    https://github.com/barryZZJ/
 // @match        http*://jwxk.ucas.ac.cn/*
@@ -285,6 +285,13 @@ const mycss = `
   .zzjbtn:active{
     background-color: gray;
   }
+  .zzjbtn.selected{
+    color: greenyellow !important;
+    background-color: darkgray;
+  }
+  .zzjbtn.full{
+    color: red;
+  }
   #movediv{
     cursor:move;
   }
@@ -300,13 +307,71 @@ function prefix (...data) {
   return ['[抢课辅助]', ...data];
 }
 
+function createElement(element, attribute, inner) {
+  if (typeof(element) === "undefined") {
+	return false;
+  }
+  if (typeof(inner) === "undefined") {
+	inner = "";
+  }
+  var el = document.createElement(element);
+  if (typeof(attribute) === 'object') {
+	for (var key in attribute) {
+	  el.setAttribute(key, attribute[key]);
+	}
+  }
+  if (!Array.isArray(inner)) {
+	inner = [inner];
+  }
+  for (var k = 0; k < inner.length; k++) {
+	if (inner[k].tagName) {
+	  el.appendChild(inner[k]);
+	} else {
+	  el.appendChild(document.createTextNode(inner[k]));
+	}
+  }
+  return el;
+}
+
+
 function drawPanel (page) {
-  let isCourseSelection = page == 'selectCourse' || page == 'debug';
-  let isMain = page == 'main';
-  // 待选课程表格
-  let tab = '';
-  let wishList = config.wishList;
-  let zzjBtnId = 1;
+  let divHeader = createElement(
+    'div',
+    { id: "movediv", style: "min-width: 150px; font-size:20px;font-weight: bold;text-align: center;position: fixed;width: 100%;height: 25px;border-bottom: 1px solid;" },
+    '待选课程'
+  );
+
+  divCourseWish = createElement(
+    'div',
+    { id: "divCourseWish", style: "margin-top: 25px; max-height: 300px; overflow-y: auto;" }
+  );
+  let table = createElement('table', { id: "courseWish", border: "1", style: "font-size: 14px;" });
+  let tbody = createElement('tbody');
+  divCourseWish.append(table);
+  table.appendChild(tbody);
+
+  let divAppendix = createElement('div', { id: "appendix", style: "margin: 5px; max-height: 300px; overflow-y: auto;" });
+
+  let divDrag = createElement('div', { draggable:"true", id:"dragDiv", style:"bottom: 0; width:100%; height:5px; background-color:#999; cursor:n-resize;" });
+
+  let panel = createElement(
+    'div',
+    { id: 'zzjpanel', style: "border: 1px solid; width: fit-content; position: fixed; top: 65px; right: 0; z-index: 99999; background-color: rgba(220,221,192,0.8); overflow-x: auto;" },
+    [divHeader, divCourseWish, divAppendix, divDrag]
+  );
+  document.body.appendChild(panel);
+
+  let isCourseSelection = page == 'selectCourse' || page == 'debug';  // 进入选课页面
+  let isMain = page == 'main';  // 进入筛选学院页面
+  let wishList = config.wishList;  // 待选课程数据
+  let zzjBtnId = 1;  // 设置zzjBtn 的id编号，每次加1
+  let chks_course=[];  // 选课复选框保存，用于统一设置事件监听器
+  let chks_deg = [];  // 学位课复选框保存，用于统一设置事件监听器
+  let fullIds = new Set(GM_getValue('fullIds', []));  // 已选满的课程ID
+
+  let selectedIds = new Set(GM_getValue('selectedIds', []));  // 已经抢到的课记录，并存入storage，方便进入选课页面时保持记录
+  
+  // 绘制ui面板 ===================================================================
   for (const dept in wishList) {
     let courses = wishList[dept];
     let deptid = DeptIdMap[dept];
@@ -319,39 +384,93 @@ function drawPanel (page) {
       if (wishes.length > 0) {
         // wishes里配置了具体的内容
         for (let wish of wishes) {
-          tab += '<tr>';
+          let tr = createElement('tr');
+          // tab += '<tr>';
           if (firstrow) {
             if (firstdept) {
-              tab += `<td rowspan="${wishes.length}"><button id="zzjbtn${zzjBtnId++}" class="zzjbtn dept jumpdept nowrap" deptid="${deptid}">${dept}🚀</button></td>`;
+              let td = createElement('td', { rowspan: wishes.length });
+              let btn = createElement('button', { id: `zzjbtn${zzjBtnId++}`, class: "zzjbtn dept jumpdept nowrap", deptid: deptid }, `${dept}🚀`);
+              td.appendChild(btn);
+
+              tr.appendChild(td);
               firstdept = false;
             } else {
-              tab += `<td rowspan="${wishes.length}"></td>`;
+              let td = createElement('td', { rowspan: wishes.length });
+              tr.appendChild(td);
             }
-            tab += `<td rowspan="${wishes.length}"><button id="zzjbtn${zzjBtnId++}" class="zzjbtn course copyable jumpcourse" deptid="${deptid}" name="${name}">${name}🚀</button></td>`;
+            let btn = createElement('button', { id: `zzjbtn${zzjBtnId++}`, class: "zzjbtn course copyable jumpcourse", deptid: deptid, name: name }, `${name}🚀`);
+            let td = createElement('td', { rowspan: wishes.length });
+            td.appendChild(btn);
+            
+            tr.appendChild(td);
             firstrow = false;
           }
-          tab += `<td><button id="zzjbtn${zzjBtnId++}" class="zzjbtn courseid copyable nowrap jumpcourseid" deptid="${deptid}" courseid="${wish.courseid}">${wish.courseid}🚀</button></td>`;
-          tab += `<td class="notes">${wish.notes}</td>`;
-          tab += '</tr>';
+          // 在ui的每一门课旁边添加选课/学位复选框(如果搜索到的话) =====================================
+          let courseidspan = getElementsByText($("#regfrm span"), wish.courseid);
+          if (isCourseSelection && courseidspan.length) {
+            let row = courseidspan.closest('tr');
+
+            // 选课
+            let chk_course_old = row.find('td:first-child input').get(0);
+            let chk_course = createElement('input', { type: 'checkbox', 'title': '选课', 'style': 'margin-left:2px; margin-right: 2px;' });
+            chk_course.disabled = chk_course_old.disabled;
+            
+            // 学位
+            let chk_deg_old = row.find('td:nth-child(2) input').get(0);
+            let chk_deg = createElement('input', { type: 'checkbox', 'title': '设为学位课' });
+            chk_deg.disabled = chk_deg_old.disabled;
+
+            let td = createElement('td');
+            let btn = createElement('button', { id: `zzjbtn${zzjBtnId++}`, class: "zzjbtn courseid copyable nowrap jumpcourseid", deptid: deptid, courseid: wish.courseid }, `${wish.courseid}🚀`);
+            td.appendChild(chk_course);
+            td.appendChild(chk_deg);
+            td.appendChild(btn);
+
+            tr.appendChild(td);
+
+            // 记录
+            chks_course.push({ old: chk_course_old, new: chk_course });
+            chks_deg.push({ old: chk_deg_old, new: chk_deg });
+            if (chk_course.disabled) {
+              fullIds.add(wish.courseid);
+            }
+          // =end= 在ui的每一门课旁边添加选课/学位复选框(如果搜索到的话) =============================
+          } else {
+            let td = createElement('td');
+            let btn = createElement('button', { id: `zzjbtn${zzjBtnId++}`, class: "zzjbtn courseid copyable nowrap jumpcourseid", deptid: deptid, courseid: wish.courseid }, `${wish.courseid}🚀`);
+            td.appendChild(btn);
+
+            tr.appendChild(td);
+          }
+          let td = createElement('td', { class: 'notes' }, wish.notes);
+          tr.appendChild(td);
+          tbody.appendChild(tr);
         }
       } else {
         // wishes为空列表
-        tab += '<tr>';
-        tab += `<td><button id="zzjbtn${zzjBtnId++}" class="zzjbtn dept jumpdept" deptid="${deptid}">${dept}🚀</button></td>`;
-        tab += `<td><button id="zzjbtn${zzjBtnId++}" class="zzjbtn course copyable jumpcourse" deptid="${deptid}" name="${name}">${name}🚀</button></td>`;
-        tab += `<td></td>`;
-        tab += `<td></td>`;
-        tab += '</tr>';
+        let tr = createElement('tr');
+        
+        let td = createElement('td');
+        let btn = createElement('button', { id: `zzjbtn${zzjBtnId++}`, class: "zzjbtn dept jumpdept", deptid: deptid }, `${dept}🚀`);
+        td.appendChild(btn);
+        tr.appendChild(td);
+        
+        td = createElement('td');
+        btn = createElement('button', { id: `zzjbtn${zzjBtnId++}`, class: "zzjbtn course copyable jumpcourse", deptid: deptid, name: name }, `${name}🚀`);
+        td.appendChild(btn);
+        tr.appendChild(td);
+        
+        tr.appendChild(createElement('td'));
+        tr.appendChild(createElement('td'));
+
+        tbody.appendChild(tr)
       }
     }
   }
+  // =end= 绘制ui面板 ===================================================================
 
-  let appendix = '';
+  // 选课页面添加验证码和提交按钮 ===========================================================
   if (isCourseSelection) {
-    // 进入选课页面
-    var appendixDiv = document.createElement('div');
-    appendixDiv.id = 'zzjappendix';
-    appendixDiv.style = 'margin: 5px; max-height: 300px; overflow-y: auto;';
 
     // 插入验证码 加在onload事件里保证验证码加载出来
     let zzjValiImg = document.createElement('img');
@@ -359,7 +478,7 @@ function drawPanel (page) {
     zzjValiImg.title = '点击更换验证码';
     zzjValiImg.align = 'bottom';
     zzjValiImg.style.cursor = 'pointer';
-    appendixDiv.appendChild(zzjValiImg);
+    divAppendix.appendChild(zzjValiImg);
     // img.width = ValidateImg.width;
     // img.height = ValidateImg.height;
 
@@ -370,7 +489,7 @@ function drawPanel (page) {
     zzjValiInput.style.width = '50px';
     zzjValiInput.style.marginLeft = '5px';
     zzjValiInput.style.marginRight = '5px';
-    appendixDiv.appendChild(zzjValiInput);
+    divAppendix.appendChild(zzjValiInput);
     
     // 添加"确定提交选课"按钮
     let zzjSubmit = document.createElement('button');
@@ -378,27 +497,13 @@ function drawPanel (page) {
     zzjSubmit.type = 'submit';
     zzjSubmit.className = 'btn btn-primary';
     zzjSubmit.textContent = '确定提交选课';
-    appendixDiv.appendChild(zzjSubmit);
+    divAppendix.appendChild(zzjSubmit);
 
-    appendix = appendixDiv.outerHTML;
   }
+  // =end= 选课页面添加验证码和提交按钮 ===========================================================
 
-  let panel = $(
-    '<div id="zzjpanel" style="border: 1px solid; width: fit-content; position: fixed; top: 65px; right: 0; z-index: 99999; background-color: rgba(220,221,192,0.6); overflow-x: auto;">' +
-    '<div id="movediv" style="min-width: 150px; font-size:20px;font-weight: bold;text-align: center;position: fixed;width: 100%;height: 25px;border-bottom: 1px solid;">待选课程</div>'+
-    '<div id="divCourseWish" style="margin-top: 25px; max-height: 300px; overflow-y: auto;">' +
-    '<table id="courseWish" border="1" style="font-size: 14px;">' +
-    '<tbody>' +
-    tab +
-    '</tbody>' +
-    '</table>' +
-    '</div>' +
-    appendix +
-    '<div draggable="true" id="dragDiv" style="bottom: 0; width:100%; height:5px; background-color:#999; cursor:n-resize;"></div>' +
-    '</div >'
-  ).appendTo('body');
 
-  // 配置各种listener
+  // 配置各种listener(必须要panel添加到body之后才能设置，在这之前设置的都无效)==========================
   if (isMain) {
     // 进入筛选学院页面
     // 一键筛选学院
@@ -439,7 +544,6 @@ function drawPanel (page) {
       let behavior = setBehavior('courseid', courseid, scrollTop, btnId);
       sumbitFilterDept(deptid, behavior);
     });
-
   }else if (isCourseSelection) {
     // 进入选课页面
 
@@ -459,6 +563,24 @@ function drawPanel (page) {
       alreadyHighlighted = resolveBehavior(behavior, alreadyHighlighted);
     });
 
+    // 同步复选框勾选情况
+    for (const tup of chks_course) {
+      $(tup.old).change(function() {
+        $(tup.new).prop("checked", this.checked);
+      });
+      $(tup.new).change(function() {
+        $(tup.old).prop("checked", this.checked);
+      });
+    }
+    for (const tup of chks_deg) {
+      $(tup.old).change(function() {
+        $(tup.new).prop("checked", this.checked);
+      });
+      $(tup.new).change(function() {
+        $(tup.old).prop("checked", this.checked);
+      });
+    }
+
     // 修复原网站中"点击切换验证码"没反应的bug
     let valiImg = document.getElementById('adminValidateImg');
     valiImg.onclick = function(){
@@ -466,7 +588,6 @@ function drawPanel (page) {
     };
     // 验证码显示及点击刷新时同步
     document.getElementById('zzjValiImg').onclick = function () {
-      console.log('zzjValiImg clicked');
       valiImg.onclick();
     }
     valiImg.addEventListener('load', () => {
@@ -492,17 +613,52 @@ function drawPanel (page) {
       $('#regfrm button[type="submit"]').click();
     });
   }
-  
+  // =end= 配置各种listener(必须要panel添加到body之后才能设置，在这之前设置的都无效)==========================
+
+  // 在ui中标注已经抢到的课：文字变绿，按钮不可点击 ======================================
+  if (isMain) {
+    // 在筛选学院页面的话，更新已选择课程列表
+    // let selectedIds = new Set();  // 外层已定义
+    $('table.table tbody tr a[href*=plan]').each((ind, ele) => {
+      let courseId = ele.text;
+      selectedIds.add(courseId);
+    });
+    // 存到storage里，方便进入选课页面后也可以保持状态
+    GM_setValue('selectedIds', [...selectedIds]);
+  }
+  // 不论哪个页面都修改ui的状态
+  for (const selectedId of selectedIds.values()) {
+    let uiBtn = $(`.zzjbtn[courseid=${selectedId}]`);
+    if (uiBtn) {
+      uiBtn.prop('disabled', true);
+      uiBtn.addClass('selected');
+    }
+  }
+  // =end= 在ui中标注已经抢到的课：文字变绿，按钮不可点击 =================================
+
+  // 在ui中标注已满的课：文字变红 ======================================
+  if (isCourseSelection) {
+    // 存到storage里，方便进入学院筛选页面后也可以保持状态
+    GM_setValue('fullIds', [...fullIds]);
+  }
+  // 不论哪个页面都修改ui的状态
+  for (const fullId of fullIds.values()) {
+    let uiBtn = $(`.zzjbtn[courseid=${fullId}]`);
+    if (uiBtn) {
+      uiBtn.addClass('full');
+    }
+  }
+  // =end= 在ui中标注已满的课：文字变红 ===============================
+
   //可拖动
   let dragopts = {
     setCursor: false,
     setPosition: false,
     handle: document.getElementById("movediv"),
   };
-  new Draggable(panel.get(0), dragopts);
+  new Draggable(panel, dragopts);
 
   // 手动调整ui高度，并记录在storage
-  divCourseWish = document.getElementById("divCourseWish");
   // 读取高度记录
   let frmheight = GM_getValue('frmheight');
   if (frmheight) {
@@ -510,7 +666,6 @@ function drawPanel (page) {
   }
   // 绑定需要拖拽改变大小的元素对象
   bindResize(divCourseWish);
-
   function bindResize(el) {
     //初始化参数
     var els = el.style;
@@ -580,17 +735,17 @@ function resolveBehavior (behavior, alreadyHighlighted=null) {
       let courseid = behavior.data;
       let courseidspan = getElementsByText($("#regfrm span"), courseid);
       // 如果找到
-      if (courseidspan.length > 0) {
+      if (courseidspan.length) {
         // 跳转到指定位置，并高亮对应行
-        highlighted = courseidspan.eq(0);
+        highlighted = courseidspan;
       }
     } else if (behavior.type == 'coursename') {
       let coursename = behavior.data;
       let coursenametag = getElementsByText($("#regfrm a"), coursename, true);
       // 如果找到
-      if (coursenametag.length > 0) {
+      if (coursenametag.length) {
         // 跳转到指定位置，并高亮对应行
-        highlighted = coursenametag.eq(0);
+        highlighted = coursenametag.first();  // 可能有多个匹配，只取第一个
       }
     }
     if (highlighted) {
