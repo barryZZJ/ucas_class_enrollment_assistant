@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         UCAS Class Enrollment Assistant
-// @version      1.6
+// @version      1.6.1
 // @description  这是一个方便抢课界面操作的脚本。包括的功能有：1.自动跳转：进入选课系统后，会自动跳转到选择课程页面。（如需查看通知公告 需要临时把脚本禁用）2.一键筛选学院：点击学院名🚀按钮可自动筛选学院。3.一键跳转到课程/课程号：点击课程名/课程id🚀可自动筛选学院，然后滚动到对应课程所在位置，并且课程名/课程号高亮。4.快速提交：选课页面内，插件ui添加验证码框+提交选课按钮（PS：修复了原网页中"点击切换验证码"没反应的bug，现在可以点击验证码图片更新没有加载出来的验证码了）。5.标注已抢到的课与已满员的课：分别用绿色和红色表示，方便抢课时迅速做出判断。已满员的课只有进入选课页面才会更新状态。⚠️目前为自用版，而且由于需要赶在抢课之前完成，时间比较紧张，故配置待选课程需要手动修改代码里的config。
 // @author       BarryZZJ
 // @namespace    https://github.com/barryZZJ/
@@ -526,9 +526,8 @@ function drawPanel (page) {
       $(this).addClass('highlight');
       let deptid = $(this).attr('deptid');
       let coursename = $(this).attr('name');
-      let scrollTop = divCourseWish.scrollTop;  // 一键跳转功能跳转后，插件页面保持之前滚动条的位置
       let btnId = $(this).attr('id');  // 方便跳转后高亮
-      let behavior = setBehavior('coursename', coursename, scrollTop, btnId);
+      let behavior = setBehavior('coursename', coursename, null, btnId);
       sumbitFilterDept(deptid, behavior);
     });
 
@@ -539,9 +538,8 @@ function drawPanel (page) {
       $(this).addClass('highlight');
       let deptid = $(this).attr('deptid');
       let courseid = $(this).attr('courseid');
-      let scrollTop = divCourseWish.scrollTop;  // 一键跳转功能跳转后，插件页面保持之前滚动条的位置
       let btnId = $(this).attr('id');  // 方便跳转后高亮
-      let behavior = setBehavior('courseid', courseid, scrollTop, btnId);
+      let behavior = setBehavior('courseid', courseid, null, btnId);
       sumbitFilterDept(deptid, behavior);
     });
   }else if (isCourseSelection) {
@@ -658,7 +656,13 @@ function drawPanel (page) {
   };
   new Draggable(panel, dragopts);
 
-  // 手动调整ui高度，并记录在storage
+  // 一键跳转功能跳转后，插件页面保持之前滚动条的位置
+  divCourseWish.scrollTop = GM_getValue('scrollTop', 0);
+  divCourseWish.onscroll = function () {
+    GM_setValue('scrollTop', divCourseWish.scrollTop);
+  };
+
+  // 允许手动调整ui长度，并记录在storage
   // 读取高度记录
   let frmheight = GM_getValue('frmheight');
   if (frmheight) {
@@ -709,7 +713,7 @@ function setBehavior(type, data, scrollTop, btnId) {
   let behavior = {
     'type': type,  // 'courseid' or 'coursename'
     'data': data,
-    'scrollTop': scrollTop,
+    // 'scrollTop': scrollTop,  // ui界面滚动条位置。改用storage传输不通过behavior传/
     'btnId': btnId,
   }
   return behavior;
