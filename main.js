@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         UCAS Class Enrollment Assistant
-// @version      1.6.1
+// @version      1.7
 // @description  这是一个方便抢课界面操作的脚本。包括的功能有：1.自动跳转：进入选课系统后，会自动跳转到选择课程页面。（如需查看通知公告 需要临时把脚本禁用）2.一键筛选学院：点击学院名🚀按钮可自动筛选学院。3.一键跳转到课程/课程号：点击课程名/课程id🚀可自动筛选学院，然后滚动到对应课程所在位置，并且课程名/课程号高亮。4.快速提交：选课页面内，插件ui添加验证码框+提交选课按钮（PS：修复了原网页中"点击切换验证码"没反应的bug，现在可以点击验证码图片更新没有加载出来的验证码了）。5.标注已抢到的课与已满员的课：分别用绿色和红色表示，方便抢课时迅速做出判断。已满员的课只有进入选课页面才会更新状态。⚠️目前为自用版，而且由于需要赶在抢课之前完成，时间比较紧张，故配置待选课程需要手动修改代码里的config。
 // @author       BarryZZJ
 // @namespace    https://github.com/barryZZJ/
@@ -10,13 +10,14 @@
 // @grant        GM_setValue
 // @grant        GM_getValue
 // @require      https://cdn.jsdelivr.net/npm/draggable@4.2.0/src/draggable.js
+// @require      https://cdn.jsdelivr.net/npm/jquery-throttle-debounce@1.0.0/jquery.ba-throttle-debounce.min.js
 // @run-at document-end
 // @license      MIT
 // ==/UserScript==
 
 var config = {
   'wishList': {
-    // 选课系统中学院名称的前两个字
+    // 选课系统中学院名称的*前两个字*
     '外语': [
       // 一个课程一个花括号
       {
@@ -30,25 +31,6 @@ var config = {
           {
             'courseid': '050200MGX014H-02',
             'notes': '周二周四(5-6)'
-          }
-        ]
-      }
-    ],
-    '体育': [
-      {
-        'name': '男子自由泳',
-        'wishes': [
-          {
-            'courseid': '045200MGX008H-01',
-            'notes': '周一(1-2)'
-          },
-          {
-            'courseid': '045200MGX008H-03',
-            'notes': '周二(7-8)'
-          },
-          {
-            'courseid': '045200MGX008H-05',
-            'notes': '周二(5-6)'
           }
         ]
       }
@@ -115,109 +97,6 @@ var config = {
           }
         ]
       }
-    ],
-    '公管': [
-      {
-        'name': '高科技企业管理',
-        'wishes': [
-          {
-            'courseid': '120100MGX003H',
-            'notes': '备 周二(10-12)',
-          }
-        ]
-      },
-      {
-        'name': '通论',
-        'wishes': []
-      },
-
-    ],
-    //核心课
-    '网络': [
-      {
-        'name': '机器学习',
-        'wishes': [
-          {
-            'courseid': '083900M01004H-01',
-            'notes': '核 周五(5-7)'
-          },
-          {
-            'courseid': '083900M01004H-02',
-            'notes': '核 周五(9-11)'
-          },
-          {
-            'courseid': '083900M01004H-03',
-            'notes': '核 周六(1-3)'
-          }
-        ]
-      },
-      {
-        'name': '安全协议与形式化方法',
-        'wishes': [
-          {
-            'courseid': '0839X5M04001H',
-            'notes': '核 周一(9-11)'
-          }
-        ]
-      },
-      {
-        'name': '网络与系统安全',
-        'wishes': [
-          {
-            'courseid': '083900M01002H',
-            'notes': '核 周五(10-12)'
-          }
-        ]
-      },
-      {
-        'name': '网络溯源取证',
-        'wishes': [
-          {
-            'courseid': '0839X6M05005H',
-            'notes': '普 周二周四(1-2)'
-          }
-        ]
-      },
-      {
-        'name': '信息隐藏',
-        'wishes': [
-          {
-            'courseid': '0839X1M05006H',
-            'notes': '普 周一(5-7)'
-          }
-        ]
-      },
-      {
-        'name': '网络协议安全',
-        'wishes': [
-          {
-            'courseid': '0839X5M05001H',
-            'notes': '普 周四(5-7)'
-          }
-        ]
-      },
-      {
-        'name': 'Web安全技术',
-        'wishes': [
-          {
-            'courseid': '0839X6M05006H',
-            'notes': '普 周二周四(3-4)'
-          }
-        ]
-      },
-      {
-        'name': '分论',
-        'wishes': [
-          {
-            'courseid': '083900MGB001H-01',
-            'notes': '公必 周二(9-10)'
-          },
-          {
-            'courseid': '083900MGB001H-02',
-            'notes': '公必 周三(1-2)'
-          },
-        ]
-      },
     ],
   },
 };
@@ -292,7 +171,7 @@ const mycss = `
   .zzjbtn.full{
     color: red;
   }
-  #movediv{
+  #divHeader{
     cursor:move;
   }
 `
@@ -301,7 +180,7 @@ sty.type = "text/css";
 sty.appendChild(document.createTextNode(mycss));
 document.body.appendChild(sty);
 
-var divCourseWish;
+var divCourseWish; // ui界面按钮部分
 var alreadyHighlighted;
 function prefix (...data) {
   return ['[抢课辅助]', ...data];
@@ -337,7 +216,7 @@ function createElement(element, attribute, inner) {
 function drawPanel (page) {
   let divHeader = createElement(
     'div',
-    { id: "movediv", style: "min-width: 150px; font-size:20px;font-weight: bold;text-align: center;position: fixed;width: 100%;height: 25px;border-bottom: 1px solid;" },
+    { id: "divHeader", style: "min-width: 150px; font-size:20px;font-weight: bold;text-align: center;position: fixed;width: 100%;height: 25px;border-bottom: 1px solid;" },
     '待选课程'
   );
 
@@ -350,9 +229,9 @@ function drawPanel (page) {
   divCourseWish.append(table);
   table.appendChild(tbody);
 
-  let divAppendix = createElement('div', { id: "appendix", style: "margin: 5px; max-height: 300px; overflow-y: auto;" });
+  let divAppendix = createElement('div', { id: "divAppendix", style: "margin: 5px; max-height: 300px; overflow-y: auto;" });
 
-  let divDrag = createElement('div', { draggable:"true", id:"dragDiv", style:"bottom: 0; width:100%; height:5px; background-color:#999; cursor:n-resize;" });
+  let divDrag = createElement('div', { draggable:"true", id:"divDrag", style:"bottom: 0; width:100%; height:5px; background-color:#999; cursor:n-resize;" });
 
   let panel = createElement(
     'div',
@@ -367,11 +246,10 @@ function drawPanel (page) {
   let zzjBtnId = 1;  // 设置zzjBtn 的id编号，每次加1
   let chks_course=[];  // 选课复选框保存，用于统一设置事件监听器
   let chks_deg = [];  // 学位课复选框保存，用于统一设置事件监听器
+
   let fullIds = new Set(GM_getValue('fullIds', []));  // 已选满的课程ID
 
-  let selectedIds = new Set(GM_getValue('selectedIds', []));  // 已经抢到的课记录，并存入storage，方便进入选课页面时保持记录
-  
-  // 绘制ui面板 ===================================================================
+  // ===== 绘制ui面板中的课程部分 ===================================================================
   for (const dept in wishList) {
     let courses = wishList[dept];
     let deptid = DeptIdMap[dept];
@@ -469,57 +347,78 @@ function drawPanel (page) {
   }
   // =end= 绘制ui面板 ===================================================================
 
-  // 选课页面添加验证码和提交按钮 ===========================================================
-  if (isCourseSelection) {
+  // divAppendix 附录栏
+  // ===== 筛选页面添加按钮 =======================================================
+  if (isMain) {
+    // 添加"重置按钮样式"按钮 (暂时没有使用该按钮的需求)
+    // let zzjResetBtnStyle = createElement(
+    //   'button',
+    //   { id: 'zzjresetbtnstyle', type: 'submit', class: 'btn btn-primary', title: '重置所有课程编码按钮的样式' },
+    //   '重置按钮样式'
+    // );
+    // zzjResetBtnStyle.style.marginLeft = '5px';
+    // zzjResetBtnStyle.style.marginRight = '5px';
+    // divAppendix.appendChild(zzjResetBtnStyle);
+
+  }
+  // =end= 筛选页面添加按钮 =======================================================
+
+
+  // ===== 选课页面添加验证码和提交按钮 ===========================================================
+  else if (isCourseSelection) {
 
     // 插入验证码 加在onload事件里保证验证码加载出来
-    let zzjValiImg = document.createElement('img');
-    zzjValiImg.id = 'zzjValiImg';
-    zzjValiImg.title = '点击更换验证码';
-    zzjValiImg.align = 'bottom';
+    let zzjValiImg = createElement(
+      'img',
+      { id: 'zzjValiImg', title: '点击更换验证码(已修复)', align: 'bottom' } 
+    )
     zzjValiImg.style.cursor = 'pointer';
     divAppendix.appendChild(zzjValiImg);
     // img.width = ValidateImg.width;
     // img.height = ValidateImg.height;
 
     // 插入验证码输入框
-    let zzjValiInput = document.createElement('input');
-    zzjValiInput.id = 'zzjvcode';
-    zzjValiInput.type = 'text';
+    let zzjValiInput = createElement(
+      'input',
+      { id: 'zzjvcode', type: 'text' }
+    );
     zzjValiInput.style.width = '50px';
     zzjValiInput.style.marginLeft = '5px';
     zzjValiInput.style.marginRight = '5px';
     divAppendix.appendChild(zzjValiInput);
     
     // 添加"确定提交选课"按钮
-    let zzjSubmit = document.createElement('button');
-    zzjSubmit.id = 'zzjsubmit';
-    zzjSubmit.type = 'submit';
-    zzjSubmit.className = 'btn btn-primary';
-    zzjSubmit.textContent = '确定提交选课';
+    let zzjSubmit = createElement(
+      'button',
+      { id: 'zzjsubmit', type: 'submit', class: 'btn btn-primary' },
+      '确定提交选课'
+    );
     divAppendix.appendChild(zzjSubmit);
 
   }
   // =end= 选课页面添加验证码和提交按钮 ===========================================================
 
 
-  // 配置各种listener(必须要panel添加到body之后才能设置，在这之前设置的都无效)==========================
+  // ===== 配置各种listener(必须要panel添加到body之后才能设置，在这之前设置的都无效，并且需要重新搜索元素)==========================
   if (isMain) {
     // 进入筛选学院页面
+
     // 一键筛选学院
     $(".zzjbtn.dept").click(function () {
       $(this).addClass('highlight');
       let deptid = $(this).attr('deptid');
       sumbitFilterDept(deptid);
     });
-    // 复制课程代码和课程名称逻辑
+
+    // 复制课程代码和课程名称
     // $(".copyable").click(function () {
     //   $(".copyable").removeClass("copied");
     //   GM_setClipboard($(this).text().replace('🚀', ''));
     //   $(this).addClass("copied");
     // });
     
-    // 一键跳转到课程：单击课程名，自动筛选学院后，自动定位到匹配到的第一行，并且匹配项高亮
+    // 一键跳转到课程：
+    // 单击课程名，自动筛选学院后，自动定位到匹配到的第一行，并且匹配项高亮
     $('.jumpcourse').click(function () {
       $('.jumpcourse').removeClass('highlight');
       $('.jumpcourseid').removeClass('highlight');
@@ -531,7 +430,8 @@ function drawPanel (page) {
       sumbitFilterDept(deptid, behavior);
     });
 
-    // 一键跳转到课程id：单击课程id，自动筛选学院后，自动定位到匹配行，并且匹配项高亮
+    // 一键跳转到课程id：
+    // 单击课程id，自动筛选学院后，自动定位到匹配行，并且匹配项高亮
     $('.jumpcourseid').click(function () {
       $('.jumpcourse').removeClass('highlight');
       $('.jumpcourseid').removeClass('highlight');
@@ -542,6 +442,21 @@ function drawPanel (page) {
       let behavior = setBehavior('courseid', courseid, null, btnId);
       sumbitFilterDept(deptid, behavior);
     });
+
+    // 重置课程编码按钮样式
+    $('#zzjresetbtnstyle').click(() => {
+      // remove 'selected' and 'full' for courseid btns
+      $('.zzjbtn.courseid').each((ind, ele) => { 
+        $(ele).prop('disabled', false);
+        $(ele).removeClass('selected');
+        $(ele).removeClass('full');
+      });
+      // clear storage
+      GM_setValue('selectedIds', []);
+      GM_setValue('fullIds', []);
+    });
+
+
   }else if (isCourseSelection) {
     // 进入选课页面
 
@@ -581,6 +496,7 @@ function drawPanel (page) {
 
     // 修复原网站中"点击切换验证码"没反应的bug
     let valiImg = document.getElementById('adminValidateImg');
+    valiImg.title = zzjValiImg.title;
     valiImg.onclick = function(){
       document.getElementById("adminValidateImg").src = '/captchaImage' + "?" + Math.random();
     };
@@ -598,35 +514,50 @@ function drawPanel (page) {
     }
   
     // 同步两个验证码框的输入
-    $("#zzjvcode").keyup(function(){
+    $("#zzjvcode").on('input', function(){
       $("#vcode").val($("#zzjvcode").val());
     });
   
-    $("#vcode").keyup(function(){
+    $("#vcode").on('input', function(){
       $("#zzjvcode").val($("#vcode").val());
     });
-
-    // ui里的提交按钮与原来的按钮同步
+    
+    // 提交选课时自动跳过"确认提交吗"对话框
+    // note: 搜索$("#regfrm").validate，用到了jquery.validate
+    let validator = $("#regfrm").validate();
+    // 推测validate包装了form的submit函数，因此去掉这一层包装
+    $('#regfrm').off("submit");
+    
+    // 在保留validator的情况下，绕过原本的submit
+    let subbtn = $('#regfrm button[type="submit"]');
+    subbtn.prop('id', 'oldsubmit');
+    subbtn.prop('type', 'button');  // 原submit如果不改的话，点击会触发form的默认submit，就不进行其他验证直接提交了
+    subbtn.click(function () {
+      if (validator.form()) {
+        // 通过验证（勾选选课框+输入验证码）后，触发form原本的submit请求
+        loading('正在提交，请稍等...');
+        validator.currentForm.submit()
+      }
+      // 否则会直接触发报错提示
+    });
+    
+    // ui面板里的提交按钮与原来的按钮同步
     $("#zzjpanel button[type='submit']").click(function () {
-      $('#regfrm button[type="submit"]').click();
+      $('#oldsubmit').click();
+      // $('#regfrm button[type="submit"]').click();
     });
   }
-  // =end= 配置各种listener(必须要panel添加到body之后才能设置，在这之前设置的都无效)==========================
+  // =end= 配置各种listener(必须要panel添加到body之后才能设置，在这之前设置的都无效，并且需要重新搜索元素)==========================
 
-  // 在ui中标注已经抢到的课：文字变绿，按钮不可点击 ======================================
-  if (isMain) {
-    // 在筛选学院页面的话，更新已选择课程列表
-    // let selectedIds = new Set();  // 外层已定义
-    $('table.table tbody tr a[href*=plan]').each((ind, ele) => {
-      let courseId = ele.text;
-      selectedIds.add(courseId);
-    });
-    // 存到storage里，方便进入选课页面后也可以保持状态
-    GM_setValue('selectedIds', [...selectedIds]);
-  }
+
+  // ===== 在ui中标注已经抢到的课：文字变绿，按钮不可点击 ======================================
+  // 读取已选择课程列表
+  let selectedIds = getSelectedIds(isMain);
+  // 更新已选课程的按钮样式
+  // selectedIds: Set
   // 不论哪个页面都修改ui的状态
   for (const selectedId of selectedIds.values()) {
-    let uiBtn = $(`.zzjbtn[courseid=${selectedId}]`);
+    let uiBtn = $(`.zzjbtn.courseid[courseid=${selectedId}]`);
     if (uiBtn) {
       uiBtn.prop('disabled', true);
       uiBtn.addClass('selected');
@@ -634,27 +565,42 @@ function drawPanel (page) {
   }
   // =end= 在ui中标注已经抢到的课：文字变绿，按钮不可点击 =================================
 
-  // 在ui中标注已满的课：文字变红 ======================================
+  // ===== 在ui中标注已满的课：文字变红 ======================================
   if (isCourseSelection) {
+    // fullIds数组已在前面添加复选框时更新
     // 存到storage里，方便进入学院筛选页面后也可以保持状态
     GM_setValue('fullIds', [...fullIds]);
   }
   // 不论哪个页面都修改ui的状态
   for (const fullId of fullIds.values()) {
-    let uiBtn = $(`.zzjbtn[courseid=${fullId}]`);
+    let uiBtn = $(`.zzjbtn.courseid[courseid=${fullId}]`);
     if (uiBtn) {
       uiBtn.addClass('full');
     }
   }
   // =end= 在ui中标注已满的课：文字变红 ===============================
 
-  //可拖动
+  // ===== 可拖动 ===============================
   let dragopts = {
     setCursor: false,
     setPosition: false,
-    handle: document.getElementById("movediv"),
+    handle: document.getElementById("divHeader"),
+    onDragEnd: function () {
+      // 避免出界，设置最大最小值
+      let frmleft = panel.offsetLeft;
+      let frmtop = panel.offsetTop;
+      frmleft = Math.max(0, Math.min(frmleft, innerWidth - 200));  // 0 < frmleft < innerWidth - 100
+      frmtop = Math.max(0, Math.min(frmtop, innerHeight - 50));
+
+      panel.style.left = frmleft + "px";
+      panel.style.top = frmtop + "px";
+      // 记录left、top
+      GM_setValue('frmleft', panel.offsetLeft);
+      GM_setValue('frmtop', panel.offsetTop);
+    }
   };
   new Draggable(panel, dragopts);
+  // =end= 可拖动 ===============================
 
   // 一键跳转功能跳转后，插件页面保持之前滚动条的位置
   divCourseWish.scrollTop = GM_getValue('scrollTop', 0);
@@ -662,12 +608,36 @@ function drawPanel (page) {
     GM_setValue('scrollTop', divCourseWish.scrollTop);
   };
 
-  // 允许手动调整ui长度，并记录在storage
-  // 读取高度记录
-  let frmheight = GM_getValue('frmheight');
+  // 允许手动调整panel长度，并记录在storage
+  // 加载panel高度
+  let frmheight = GM_getValue('frmheight');  // default: undefined
   if (frmheight) {
     divCourseWish.style.maxHeight = frmheight;
   }
+  // 加载paneltop、left
+  let frmleft = GM_getValue('frmleft');
+  if (frmleft) {
+    panel.style.left = frmleft + 'px';
+  }
+  let frmtop = GM_getValue('frmtop');
+  if (frmtop) {
+    panel.style.top = frmtop + 'px';
+  }
+  addEventListener('resize', Cowboy.debounce(250, function () {
+    // 调整浏览器大小时，避免ui面板出界，设置最大最小值
+    let frmleft = panel.offsetLeft;
+    let frmtop = panel.offsetTop;
+    frmleft = Math.max(0, Math.min(frmleft, innerWidth - 200));  // 0 < frmleft < innerWidth - 100
+    frmtop = Math.max(0, Math.min(frmtop, innerHeight - 50));
+
+    panel.style.left = frmleft + "px";
+    panel.style.top = frmtop + "px";
+    // 记录left、top
+    GM_setValue('frmleft', panel.offsetLeft);
+    GM_setValue('frmtop', panel.offsetTop);
+    // TODO 改为面板跟着移动
+    
+  }));
   // 绑定需要拖拽改变大小的元素对象
   bindResize(divCourseWish);
   function bindResize(el) {
@@ -676,7 +646,7 @@ function drawPanel (page) {
     //鼠标的 X 和 Y 轴坐标
     var y = 0;
     //邪恶的食指
-    $("#dragDiv").mousedown(function (e) {
+    $("#divDrag").mousedown(function (e) {
       //按下元素后，计算当前鼠标与对象计算后的坐标
       (y = e.clientY - el.offsetHeight);
       //在支持 setCapture 做些东东
@@ -706,6 +676,22 @@ function drawPanel (page) {
   }
 
   return panel;
+}
+
+function getSelectedIds (isMain) {
+  if (isMain) {
+    // 在筛选学院页面的话，读取当前已选择课程列表
+    let selectedIds = new Set();  // 外层已定义
+    $('table.table tbody tr a[href*=plan]').each((ind, ele) => {
+      let courseId = ele.text;
+      selectedIds.add(courseId);
+    });
+    // 存到storage里，方便进入选课页面后也可以保持状态
+    GM_setValue('selectedIds', [...selectedIds]);
+    return selectedIds;
+  }
+  // 否则直接返回记录
+  return GM_getValue('selectedIds', []);
 }
 
 function setBehavior(type, data, scrollTop, btnId) {
